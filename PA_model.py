@@ -184,3 +184,106 @@ class PAModel(tf.keras.Model):
         yout = ifft(x_freq_post) * tf.cast(n_samples, tf.complex64)
 
         return yout
+
+class ACPRCalculatorTF:
+    """TensorFlow implementation of Adjacent Channel Power Ratio calculation"""
+
+    def __init__(self):
+        pass
+
+    def welch_tf(self, x, fs, nperseg=512, noverlap=0):
+        """
+        Stable Welch PSD using TensorFlow FFT.
+        Produces two-sided PSD like SciPy (return_onesided=False).
+        """
+
+        # Ensure tensor & complex type
+        if not isinstance(x, tf.Tensor):
+            x = tf.convert_to_tensor(x)
+        x = tf.cast(tf.reshape(x, [-1]), tf.complex64)
+
+        win = tf.signal.hann_window(
+            nperseg, periodic=True, dtype=tf.float32
+        )
+        hop = nperseg - noverlap
+
+        # --- Zero-pad if too short (SciPy behavior) ---
+        x_len = tf.shape(x)[0]
+        x = tf.cond(
+            x_len < nperseg,
+            lambda: tf.concat(
+                [x, tf.zeros(nperseg - x_len, dtype=x.dtype)], axis=0
+            ),
+            lambda: x
+        )
+
+        # --- Frame the signal like Welch ---
+        frames = tf.signal.frame(
+            x,
+            frame_length=nperseg,
+            frame_step=hop
+        )  # shape [num_frames, nperseg]
+
+        # Apply window
+        frames = frames * tf.cast(win, tf.complex64)
+
+        # --- FFT each frame ---
+        X = tf.signal.fft(frames)
+
+        # Power spectral density per frame
+        win_power = tf.reduce_sum(win**2)
+        Pxx = (tf.abs(X)**2) / (fs * win_power)
+
+        # Average across segments
+        Pxx_mean = tf.reduce_mean(Pxx, axis=0)
+
+        # Two-sided frequency vector (matches SciPy)
+        freqs = tf.range(
+            -nperseg // 2,
+            nperseg // 2,
+            dtype=tf.float32
+        ) * (fs / nperseg)
+
+        Pxx_mean = tf.signal.fftshift(Pxx_mean)
+
+
+        return freqs, Pxx_mean
+
+    def calculate_acpr_sur(
+        self,
+        signal,
+        fs,
+        f0_bb,
+        meas_bw_main,
+        acpr_offsets,
+        meas_bw_acpr
+    ):
+
+        f, Pxx = self.welch_tf(
+            signal, fs, nperseg=512, noverlap=0
+        )
+        Pxx_lin = tf.abs(Pxx)
+
+        def band_power(f, Pxx, f_center, BW):
+            mask = tf.logical_and(
+                f >= f_center - BW / 2,
+                f <= f_center + BW / 2
+            )
+            df = f[1] - f[0]
+            return tf.reduce_sum(tf.boolean_mask(Pxx, mask)) * tf.abs(df)
+
+        Pmain = band_power(f, Pxx_lin, f0_bb, meas_bw_main)
+
+        ChP = 10.0 * tf.math.log(Pmain + 1e-30) / tf.math.log(10.0)
+
+        Pacp_lower = band_power(
+            f, Pxx_lin, f0_bb - acpr_offsets[0], meas_bw_acpr
+        )
+        Pacp_upper = band_power(
+            f, Pxx_lin, f0_bb + acpr_offsets[0], meas_bw_acpr
+        )
+        print(Pacp_upper+Pmain+Pacp_lower)
+        acpr1 = 10.0 * tf.math.log(Pacp_lower / Pmain + 1e-30) / tf.math.log(10.0)
+        acpr2 = 10.0 * tf.math.log(Pacp_upper / Pmain + 1e-30) / tf.math.log(10.0)
+
+        return acpr1, acpr2, ChP
