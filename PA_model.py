@@ -19,7 +19,7 @@ class ModifiedRappModel(tf.keras.layers.Layer):
         self.alpha = alpha
         self.beta = beta
 
-    @tf.function
+    # @tf.function
     def amplify(self, vin):
         """
         Apply Modified Rapp model amplification
@@ -282,7 +282,7 @@ class ACPRCalculatorTF:
         Pacp_upper = band_power(
             f, Pxx_lin, f0_bb + acpr_offsets[0], meas_bw_acpr
         )
-        print(Pacp_upper+Pmain+Pacp_lower)
+        # print(Pacp_upper+Pmain+Pacp_lower)
         acpr1 = 10.0 * tf.math.log(Pacp_lower / Pmain + 1e-30) / tf.math.log(10.0)
         acpr2 = 10.0 * tf.math.log(Pacp_upper / Pmain + 1e-30) / tf.math.log(10.0)
 
